@@ -88,7 +88,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         paper = await Promise.race([
           ApiService.uploadPaper(file),
           new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('PDF processing timeout. Please try a smaller or simpler PDF file.')), 45000);
+            setTimeout(() => reject(new Error('PDF processing timeout. Please try a smaller or simpler PDF file.')), 90000);
           })
         ]);
       } catch (processingError) {
