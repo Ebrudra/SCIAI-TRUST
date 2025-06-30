@@ -46,6 +46,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
   }, []);
 
   const resetProgress = () => {
+    console.log('🔄 Resetting upload progress state');
     setExtractionProgress(null);
     setIsProcessing(false);
     setProcessingStage('');
@@ -74,7 +75,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
       });
 
       // Small delay to show the first stage
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       setExtractionProgress({
         stage: 'Extracting text content',
@@ -82,17 +83,14 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: false
       });
 
-      // Process the PDF with timeout handling
+      // Process the PDF with proper error handling
       let paper;
       try {
-        paper = await Promise.race([
-          ApiService.uploadPaper(file),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('PDF processing timeout. Please try a smaller or simpler PDF file.')), 90000);
-          })
-        ]);
+        console.log('📤 Calling ApiService.uploadPaper...');
+        paper = await ApiService.uploadPaper(file);
+        console.log('✅ ApiService.uploadPaper completed:', paper);
       } catch (processingError) {
-        console.error('PDF processing error:', processingError);
+        console.error('❌ PDF processing error:', processingError);
         
         // Show error state
         setExtractionProgress({
@@ -109,21 +107,29 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         return;
       }
 
+      // Show completion state
+      console.log('✅ Setting completion state...');
       setExtractionProgress({
         stage: 'Analysis complete',
         details: `Successfully extracted ${paper.metadata?.wordCount || 'unknown'} words from ${paper.metadata?.pageCount || 'unknown'} pages`,
         completed: true
       });
 
-      // Show completion briefly before proceeding
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Brief delay to show completion
+      await new Promise(resolve => setTimeout(resolve, 800));
 
-      console.log('✅ File upload completed successfully');
-      onPaperSubmit(paper);
+      console.log('🚀 Submitting paper to parent component...');
+      
+      // Reset state BEFORE calling onPaperSubmit to prevent UI issues
       resetProgress();
+      
+      // Submit the paper
+      onPaperSubmit(paper);
+      
+      console.log('✅ File upload process completed successfully');
 
     } catch (error) {
-      console.error('Error uploading file:', error);
+      console.error('❌ Error in handleFileUpload:', error);
       
       setExtractionProgress({
         stage: 'Upload failed',
@@ -142,6 +148,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
   const handleIdentifierSubmit = async () => {
     if (!identifier.trim()) return;
     
+    console.log('🔄 Starting identifier submission...');
     setIsProcessing(true);
     setProcessingStage('Processing identifier...');
     
@@ -152,7 +159,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: false
       });
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       setExtractionProgress({
         stage: 'Fetching metadata',
@@ -168,14 +175,18 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: true
       });
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 800));
 
-      onPaperSubmit(paper);
-      setIdentifier('');
+      // Reset state BEFORE calling onPaperSubmit
       resetProgress();
+      setIdentifier('');
+      
+      onPaperSubmit(paper);
+      
+      console.log('✅ Identifier submission completed successfully');
 
     } catch (error) {
-      console.error('Error processing identifier:', error);
+      console.error('❌ Error processing identifier:', error);
       
       setExtractionProgress({
         stage: 'Processing failed',
@@ -211,22 +222,24 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
       <div className="flex space-x-4 mb-6">
         <button
           onClick={() => setInputMethod('upload')}
+          disabled={isProcessing}
           className={`flex-1 p-3 rounded-lg border text-sm font-medium transition-colors ${
             inputMethod === 'upload'
               ? 'border-blue-500 bg-blue-50 text-blue-700'
               : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-          }`}
+          } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <Upload className="h-4 w-4 mx-auto mb-1" />
           Upload PDF
         </button>
         <button
           onClick={() => setInputMethod('identifier')}
+          disabled={isProcessing}
           className={`flex-1 p-3 rounded-lg border text-sm font-medium transition-colors ${
             inputMethod === 'identifier'
               ? 'border-blue-500 bg-blue-50 text-blue-700'
               : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-          }`}
+          } ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <Search className="h-4 w-4 mx-auto mb-1" />
           DOI/ArXiv/URL
@@ -239,11 +252,11 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
             dragActive
               ? 'border-blue-500 bg-blue-50'
               : 'border-gray-300 hover:border-gray-400'
-          }`}
-          onDragEnter={handleDrag}
-          onDragLeave={handleDrag}
-          onDragOver={handleDrag}
-          onDrop={handleDrop}
+          } ${isProcessing ? 'pointer-events-none opacity-75' : ''}`}
+          onDragEnter={!isProcessing ? handleDrag : undefined}
+          onDragLeave={!isProcessing ? handleDrag : undefined}
+          onDragOver={!isProcessing ? handleDrag : undefined}
+          onDrop={!isProcessing ? handleDrop : undefined}
         >
           {isProcessing ? (
             <div className="flex flex-col items-center">
@@ -323,18 +336,21 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
                 onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
                 className="hidden"
                 id="file-upload"
+                disabled={isProcessing}
               />
               <label
                 htmlFor="file-upload"
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer transition-colors"
+                className={`inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer transition-colors ${
+                  isProcessing ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 Select PDF File
               </label>
               <div className="mt-4 text-xs text-gray-500">
-                <p>✓ Advanced PDF text extraction with timeout protection</p>
+                <p>✓ Optimized PDF text extraction with fast processing</p>
                 <p>✓ Automatic metadata and structure detection</p>
                 <p>✓ Support for complex academic papers (up to 50MB)</p>
-                <p>✓ Fallback handling for problematic files</p>
+                <p>✓ Robust error handling and fallback mechanisms</p>
               </div>
             </>
           )}
@@ -487,7 +503,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
         <p>
           All AI-generated content includes transparency metrics and requires usage disclosure for academic integrity.
-          PDF processing includes timeout protection and fallback handling for problematic files.
+          PDF processing is optimized for fast extraction with robust error handling.
         </p>
       </div>
     </div>
