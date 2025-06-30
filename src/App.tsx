@@ -36,6 +36,7 @@ function App() {
   };
 
   const handleNavigate = (view: AppView) => {
+    console.log(`🧭 Navigating to: ${view}`);
     setCurrentView(view);
     // Clear analysis state when navigating away from analysis
     if (view !== 'analysis') {
@@ -46,24 +47,38 @@ function App() {
     }
   };
 
+  const handleLogoutSuccess = () => {
+    console.log('👋 Logout successful, navigating to homepage');
+    setCurrentView('homepage');
+    setCurrentPaper(null);
+    setCurrentSummary(null);
+    setIsProcessing(false);
+    setError(null);
+  };
+
   const handlePaperSubmit = async (paper: Paper) => {
+    console.log('📄 Paper submitted for analysis:', paper.title);
     setCurrentPaper(paper);
     setIsProcessing(true);
     setError(null);
     
     try {
       // Generate summary using real API with selected provider
+      console.log(`🤖 Starting AI analysis with ${selectedProvider}...`);
       const summary = await ApiService.generateSummary(paper, selectedProvider);
+      console.log('✅ AI analysis completed successfully');
       setCurrentSummary(summary);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error processing paper:', err);
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      console.error('❌ Error processing paper:', err);
+      setError(errorMessage);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleNewAnalysis = () => {
+    console.log('🔄 Starting new analysis');
     setCurrentPaper(null);
     setCurrentSummary(null);
     setIsProcessing(false);
@@ -71,6 +86,7 @@ function App() {
   };
 
   const handleBackToHome = () => {
+    console.log('🏠 Returning to homepage');
     setCurrentView('homepage');
     handleNewAnalysis();
   };
@@ -104,6 +120,7 @@ function App() {
         onLogoClick={handleBackToHome} 
         onAdminClick={handleAdminAccess}
         onNavigate={handleNavigate}
+        onLogoutSuccess={handleLogoutSuccess}
         currentView={currentView}
         showAdminLink={user?.role === 'admin'}
       />

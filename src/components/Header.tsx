@@ -8,6 +8,7 @@ interface HeaderProps {
   onLogoClick?: () => void;
   onAdminClick?: () => void;
   onNavigate?: (view: 'homepage' | 'analysis' | 'admin' | 'history' | 'workspaces' | 'profile' | 'analytics') => void;
+  onLogoutSuccess?: () => void;
   currentView?: string;
   showAdminLink?: boolean;
 }
@@ -16,6 +17,7 @@ const Header: React.FC<HeaderProps> = ({
   onLogoClick, 
   onAdminClick, 
   onNavigate,
+  onLogoutSuccess,
   currentView,
   showAdminLink 
 }) => {
@@ -127,7 +129,7 @@ const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
               
-              <UserMenu onNavigate={onNavigate} />
+              <UserMenu onNavigate={onNavigate} onLogoutSuccess={onLogoutSuccess} />
             </div>
           </div>
         </div>

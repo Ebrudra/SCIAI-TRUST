@@ -15,7 +15,8 @@ import {
   Edit,
   Copy,
   ExternalLink,
-  TrendingUp
+  TrendingUp,
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
@@ -37,6 +38,7 @@ const UserHistory: React.FC = () => {
   const { user } = useAuth();
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'papers' | 'summaries'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title' | 'confidence'>('date');
@@ -46,16 +48,30 @@ const UserHistory: React.FC = () => {
   useEffect(() => {
     if (user) {
       loadUserHistory();
+    } else {
+      // If no user, set loading to false immediately
+      setLoading(false);
     }
   }, [user]);
 
   const loadUserHistory = async () => {
     try {
+      console.log('📚 Loading user history...');
       setLoading(true);
+      setError(null);
+      
       const [papers, summaries] = await Promise.all([
-        ApiService.getUserPapers(),
-        ApiService.getUserSummaries()
+        ApiService.getUserPapers().catch(error => {
+          console.error('Error loading papers:', error);
+          return []; // Return empty array on error
+        }),
+        ApiService.getUserSummaries().catch(error => {
+          console.error('Error loading summaries:', error);
+          return []; // Return empty array on error
+        })
       ]);
+
+      console.log(`📄 Loaded ${papers.length} papers and ${summaries.length} summaries`);
 
       const items: HistoryItem[] = [
         ...papers.map(paper => ({
@@ -79,10 +95,12 @@ const UserHistory: React.FC = () => {
       ];
 
       setHistoryItems(items);
+      console.log(`✅ History loaded successfully: ${items.length} total items`);
+      
     } catch (error) {
-      console.error('Error loading user history:', error);
-      // Set empty array on error to prevent crashes
-      setHistoryItems([]);
+      console.error('❌ Error loading user history:', error);
+      setError('Failed to load history. Please try again.');
+      setHistoryItems([]); // Set empty array on error
     } finally {
       setLoading(false);
     }
@@ -90,10 +108,13 @@ const UserHistory: React.FC = () => {
 
   const filteredAndSortedItems = historyItems
     .filter(item => {
-      const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = !searchTerm || 
+        item.title.toLowerCase().includes(searchTerm.toLowerCase());
+      
       const matchesType = filterType === 'all' || 
         (filterType === 'papers' && item.type === 'paper') ||
         (filterType === 'summaries' && item.type === 'summary');
+      
       return matchesSearch && matchesType;
     })
     .sort((a, b) => {
@@ -193,9 +214,12 @@ const UserHistory: React.FC = () => {
                   <span>Delete ({selectedItems.size})</span>
                 </button>
               )}
-              <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+              <button 
+                onClick={loadUserHistory}
+                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
                 <Download className="h-4 w-4" />
-                <span>Export History</span>
+                <span>Refresh</span>
               </button>
             </div>
           </div>
@@ -203,6 +227,25 @@ const UserHistory: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Error State */}
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <AlertCircle className="h-5 w-5 text-red-500 mr-3" />
+              <div>
+                <h3 className="text-sm font-medium text-red-800">Error Loading History</h3>
+                <p className="text-sm text-red-700 mt-1">{error}</p>
+                <button
+                  onClick={loadUserHistory}
+                  className="mt-2 text-sm bg-red-100 text-red-800 px-3 py-1 rounded-md hover:bg-red-200"
+                >
+                  Try Again
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Filters and Search */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-4 md:space-y-0">
@@ -293,10 +336,11 @@ const UserHistory: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-gray-600">Avg. Confidence</p>
                 <p className="text-3xl font-bold text-gray-900">
-                  {Math.round(historyItems
-                    .filter(item => item.confidence)
-                    .reduce((sum, item) => sum + (item.confidence || 0), 0) / 
-                    historyItems.filter(item => item.confidence).length * 100) || 0}%
+                  {historyItems.filter(item => item.confidence).length > 0 ? 
+                    Math.round(historyItems
+                      .filter(item => item.confidence)
+                      .reduce((sum, item) => sum + (item.confidence || 0), 0) / 
+                      historyItems.filter(item => item.confidence).length * 100) : 0}%
                 </p>
               </div>
               <TrendingUp className="h-8 w-8 text-yellow-500" />

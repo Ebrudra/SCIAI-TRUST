@@ -5,9 +5,10 @@ import AuthModal from './AuthModal';
 
 interface UserMenuProps {
   onNavigate?: (view: 'homepage' | 'analysis' | 'admin' | 'history' | 'workspaces' | 'profile') => void;
+  onLogoutSuccess?: () => void;
 }
 
-const UserMenu: React.FC<UserMenuProps> = ({ onNavigate }) => {
+const UserMenu: React.FC<UserMenuProps> = ({ onNavigate, onLogoutSuccess }) => {
   const { user, signOut } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -15,11 +16,19 @@ const UserMenu: React.FC<UserMenuProps> = ({ onNavigate }) => {
 
   const handleSignOut = async () => {
     try {
-      await signOut();
+      console.log('👋 Starting sign out process...');
       setIsMenuOpen(false);
-      onNavigate?.('homepage');
+      
+      await signOut();
+      console.log('✅ Sign out completed successfully');
+      
+      // Call the logout success callback to navigate to homepage
+      onLogoutSuccess?.();
+      
     } catch (error) {
-      console.error('Error signing out:', error);
+      console.error('❌ Error signing out:', error);
+      // Even if there's an error, try to navigate to homepage
+      onLogoutSuccess?.();
     }
   };
 

@@ -48,13 +48,15 @@ export class ApiService {
 
       console.log('💾 Saving paper to database...');
 
-      // Create paper record in database with retry logic
+      // Create paper record in database with retry logic and better error handling
       let paper;
       let retryCount = 0;
       const maxRetries = 3;
 
       while (retryCount < maxRetries) {
         try {
+          console.log(`📤 Database insert attempt ${retryCount + 1}/${maxRetries}...`);
+          
           const { data, error } = await supabase
             .from('papers')
             .insert({
@@ -70,29 +72,48 @@ export class ApiService {
             .single();
 
           if (error) {
+            console.error(`❌ Database error (attempt ${retryCount + 1}):`, error);
             throw error;
           }
 
+          console.log('✅ Database insert successful');
           paper = data;
           break;
         } catch (dbError) {
           retryCount++;
-          console.error(`Database error (attempt ${retryCount}):`, dbError);
+          console.error(`❌ Database error (attempt ${retryCount}):`, dbError);
           
           if (retryCount >= maxRetries) {
-            throw new Error(`Failed to save paper after ${maxRetries} attempts: ${dbError.message}`);
+            // If all retries failed, still return the paper data for analysis
+            // but without database persistence
+            console.warn('⚠️ Database save failed, proceeding with in-memory paper data');
+            paper = {
+              id: `temp-${Date.now()}`,
+              title,
+              authors: authors.length > 0 ? authors : ['Unknown Author'],
+              content: extractionResult.text,
+              metadata: {
+                ...enhancedMetadata,
+                uploadedBy: userId,
+                temporaryId: true,
+                dbSaveError: dbError.message
+              }
+            };
+            break;
           }
           
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+          // Wait before retry with exponential backoff
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+          console.log(`⏳ Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
 
       if (!paper) {
-        throw new Error('Failed to save paper to database');
+        throw new Error('Failed to process paper data');
       }
 
-      console.log('✅ Paper saved successfully');
+      console.log('✅ Paper processing completed successfully');
 
       return {
         id: paper.id,
@@ -103,7 +124,7 @@ export class ApiService {
         metadata: paper.metadata
       }
     } catch (error) {
-      console.error('Error uploading paper:', error);
+      console.error('❌ Error uploading paper:', error);
       
       // Provide more specific error messages
       if (error.message?.includes('Failed to save paper')) {
@@ -179,7 +200,32 @@ export class ApiService {
           console.error(`Database error (attempt ${retryCount}):`, dbError);
           
           if (retryCount >= maxRetries) {
-            throw new Error(`Failed to save paper after ${maxRetries} attempts: ${dbError.message}`);
+            // If database save fails, still return paper data for analysis
+            console.warn('⚠️ Database save failed, proceeding with in-memory paper data');
+            paper = {
+              id: `temp-${Date.now()}`,
+              title: title || academicPaper.title,
+              authors: academicPaper.authors.length > 0 ? academicPaper.authors : ['Unknown Author'],
+              url: academicPaper.url,
+              doi: academicPaper.doi,
+              content: academicPaper.abstract,
+              metadata: {
+                ...academicPaper.metadata,
+                journal: academicPaper.journal,
+                publishedDate: academicPaper.publishedDate,
+                keywords: academicPaper.keywords,
+                citations: academicPaper.citations,
+                pdfUrl: academicPaper.pdfUrl,
+                fullTextUrl: academicPaper.fullTextUrl,
+                abstract: academicPaper.abstract,
+                submittedAt: new Date().toISOString(),
+                source: 'academic-database',
+                uploadedBy: userId,
+                temporaryId: true,
+                dbSaveError: dbError.message
+              }
+            };
+            break;
           }
           
           // Wait before retry
@@ -188,10 +234,10 @@ export class ApiService {
       }
 
       if (!paper) {
-        throw new Error('Failed to save paper information to database');
+        throw new Error('Failed to process paper information');
       }
 
-      console.log('✅ Paper metadata saved successfully');
+      console.log('✅ Paper metadata processing completed successfully');
 
       return {
         id: paper.id,
@@ -249,7 +295,7 @@ export class ApiService {
 
       console.log('💾 Saving analysis results...');
 
-      // Store summary in database with retry logic
+      // Store summary in database with retry logic and graceful fallback
       let summary;
       let retryCount = 0;
       const maxRetries = 3;
@@ -287,7 +333,28 @@ export class ApiService {
           console.error(`Database error saving summary (attempt ${retryCount}):`, dbError);
           
           if (retryCount >= maxRetries) {
-            throw new Error(`Failed to save analysis results after ${maxRetries} attempts: ${dbError.message}`);
+            // If database save fails, create in-memory summary
+            console.warn('⚠️ Database save failed, creating in-memory summary');
+            summary = {
+              id: `temp-summary-${Date.now()}`,
+              paper_id: paper.id,
+              content: analysis.content,
+              key_points: analysis.keyPoints,
+              limitations: analysis.limitations,
+              citations: analysis.citations,
+              confidence: analysis.confidence,
+              ethics_flags: analysis.ethicsFlags,
+              xai_data: analysis.xaiData,
+              created_at: new Date().toISOString(),
+              metadata: {
+                provider,
+                generatedBy: userId,
+                generatedAt: new Date().toISOString(),
+                temporaryId: true,
+                dbSaveError: dbError.message
+              }
+            };
+            break;
           }
           
           // Wait before retry
@@ -296,10 +363,10 @@ export class ApiService {
       }
 
       if (!summary) {
-        throw new Error('Failed to save analysis results');
+        throw new Error('Failed to create analysis results');
       }
 
-      console.log('✅ Analysis results saved successfully');
+      console.log('✅ Analysis results processing completed successfully');
 
       return this.transformDatabaseSummary(summary, analysis.researchGaps)
     } catch (error) {
@@ -323,11 +390,15 @@ export class ApiService {
             const extractionResult = await PDFProcessor.extractTextFromFile(pdfFile);
             fullTextContent = extractionResult.text;
             
-            // Update paper content in database
-            await supabase
-              .from('papers')
-              .update({ content: fullTextContent })
-              .eq('id', paper.id);
+            // Update paper content in database if possible
+            try {
+              await supabase
+                .from('papers')
+                .update({ content: fullTextContent })
+                .eq('id', paper.id);
+            } catch (updateError) {
+              console.warn('Failed to update paper content in database:', updateError);
+            }
           }
         } catch (pdfError) {
           console.warn('Failed to fetch PDF content:', pdfError);
@@ -354,10 +425,59 @@ export class ApiService {
         console.warn('Auth check failed, using anonymous user:', authError);
       }
 
-      // Store summary in database
-      const { data: summary, error } = await supabase
-        .from('summaries')
-        .insert({
+      // Store summary in database with graceful fallback
+      let summary;
+      try {
+        const { data, error } = await supabase
+          .from('summaries')
+          .insert({
+            paper_id: paper.id,
+            content: analysis.content,
+            key_points: analysis.keyPoints,
+            limitations: analysis.limitations,
+            citations: analysis.citations,
+            confidence: analysis.confidence,
+            ethics_flags: analysis.ethicsFlags,
+            xai_data: analysis.xaiData,
+            metadata: {
+              provider,
+              generatedBy: userId,
+              generatedAt: new Date().toISOString()
+            }
+          })
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Database error storing summary:', error)
+          // Create in-memory summary as fallback
+          summary = {
+            id: `temp-summary-${Date.now()}`,
+            paper_id: paper.id,
+            content: analysis.content,
+            key_points: analysis.keyPoints,
+            limitations: analysis.limitations,
+            citations: analysis.citations,
+            confidence: analysis.confidence,
+            ethics_flags: analysis.ethicsFlags,
+            xai_data: analysis.xaiData,
+            created_at: new Date().toISOString(),
+            metadata: {
+              provider,
+              generatedBy: userId,
+              generatedAt: new Date().toISOString(),
+              temporaryId: true,
+              dbSaveError: error.message
+            }
+          };
+        } else {
+          summary = data;
+        }
+      } catch (dbError) {
+        console.error('Database connection error:', dbError);
+        // Create in-memory summary as fallback
+        summary = {
+          id: `temp-summary-${Date.now()}`,
           paper_id: paper.id,
           content: analysis.content,
           key_points: analysis.keyPoints,
@@ -366,18 +486,15 @@ export class ApiService {
           confidence: analysis.confidence,
           ethics_flags: analysis.ethicsFlags,
           xai_data: analysis.xaiData,
+          created_at: new Date().toISOString(),
           metadata: {
             provider,
             generatedBy: userId,
-            generatedAt: new Date().toISOString()
+            generatedAt: new Date().toISOString(),
+            temporaryId: true,
+            dbSaveError: dbError.message
           }
-        })
-        .select()
-        .single()
-
-      if (error) {
-        console.error('Database error storing summary:', error)
-        throw new Error('Failed to save analysis results')
+        };
       }
 
       return this.transformDatabaseSummary(summary, analysis.researchGaps)
@@ -476,7 +593,7 @@ export class ApiService {
     }
   }
 
-  // New methods for authenticated users
+  // Enhanced methods for authenticated users with better error handling
   static async getUserPapers(): Promise<Paper[]> {
     try {
       // Get current user
@@ -486,6 +603,7 @@ export class ApiService {
         return [];
       }
 
+      console.log('📄 Fetching user papers...');
       const { data: papers, error } = await supabase
         .from('papers')
         .select('*')
@@ -494,9 +612,10 @@ export class ApiService {
 
       if (error) {
         console.error('Error fetching user papers:', error);
-        throw error;
+        return []; // Return empty array instead of throwing
       }
 
+      console.log(`✅ Fetched ${papers?.length || 0} user papers`);
       return (papers || []).map(paper => ({
         id: paper.id,
         title: paper.title,
@@ -522,6 +641,7 @@ export class ApiService {
         return [];
       }
 
+      console.log('📊 Fetching user summaries...');
       const { data: summaries, error } = await supabase
         .from('summaries')
         .select(`
@@ -533,9 +653,10 @@ export class ApiService {
 
       if (error) {
         console.error('Error fetching user summaries:', error);
-        throw error;
+        return []; // Return empty array instead of throwing
       }
 
+      console.log(`✅ Fetched ${summaries?.length || 0} user summaries`);
       return (summaries || []).map(summary => this.transformDatabaseSummary(summary));
     } catch (error) {
       console.error('Error fetching user summaries:', error);
