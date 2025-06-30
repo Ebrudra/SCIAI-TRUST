@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import { 
   ShareLink, 
   Comment, 
@@ -10,11 +9,7 @@ import {
   Notification
 } from '../types';
 import { ExportService } from './exportService';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+import { supabase } from '../lib/supabase';
 
 export class CollaborationService {
   // Share Link Management

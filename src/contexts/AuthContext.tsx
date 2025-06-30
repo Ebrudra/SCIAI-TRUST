@@ -1,10 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+import { supabase } from '../lib/supabase';
 
 interface User {
   id: string;
@@ -41,26 +36,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let mounted = true;
-    let timeoutId: NodeJS.Timeout;
+    let sessionCheckTimeout: NodeJS.Timeout;
 
-    // Check for existing session with timeout
+    // Optimized session check with faster timeout
     const checkSession = async () => {
       try {
         console.log('🔍 Checking existing session...');
         
-        // Set a timeout to prevent infinite loading
-        timeoutId = setTimeout(() => {
+        // Set a shorter timeout to prevent long loading states
+        sessionCheckTimeout = setTimeout(() => {
           if (mounted) {
             console.warn('⏰ Session check timeout, setting loading to false');
             setLoading(false);
           }
-        }, 10000); // 10 second timeout
+        }, 5000); // Reduced from 10s to 5s
 
         const { data: { session }, error } = await supabase.auth.getSession();
         
         // Clear timeout if we get a response
-        if (timeoutId) {
-          clearTimeout(timeoutId);
+        if (sessionCheckTimeout) {
+          clearTimeout(sessionCheckTimeout);
         }
         
         if (error) {
@@ -79,8 +74,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (error) {
         console.error('❌ Error checking session:', error);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
+        if (sessionCheckTimeout) {
+          clearTimeout(sessionCheckTimeout);
         }
       } finally {
         if (mounted) {
@@ -91,7 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     checkSession();
 
-    // Listen for auth changes
+    // Listen for auth changes with optimized handling
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔄 Auth state change:', event, session?.user?.email);
@@ -131,8 +126,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       mounted = false;
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      if (sessionCheckTimeout) {
+        clearTimeout(sessionCheckTimeout);
       }
       subscription.unsubscribe();
     };
@@ -142,29 +137,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('👤 Loading user profile for:', email);
       
-      // Set a timeout for profile loading
+      // Set a timeout for profile loading with faster fallback
       const profileTimeout = setTimeout(() => {
         console.warn('⏰ Profile loading timeout, using fallback');
         setUser({
           id: userId,
           email: email,
-          name: userMetadata?.name || email.split('@')[0],
+          name: userMetadata?.name || userMetadata?.full_name || email.split('@')[0],
           role: 'user',
           createdAt: new Date()
         });
         setLoading(false);
-      }, 5000); // 5 second timeout for profile loading
+      }, 3000); // Reduced from 5s to 3s
       
-      // Check if user profile exists in our users table
+      // Check if user profile exists in our users table with faster query
       const { data: profile, error } = await supabase
         .from('users')
-        .select('*')
+        .select('id, email, name, avatar, role, created_at')
         .eq('id', userId)
-        .single();
+        .maybeSingle(); // Use maybeSingle instead of single to avoid errors
 
       clearTimeout(profileTimeout);
 
-      if (error && error.code === 'PGRST116') {
+      if (error && error.code !== 'PGRST116') {
+        console.error('❌ Error loading user profile:', error);
+        // Still set user with basic info even if profile loading fails
+        setUser({
+          id: userId,
+          email: email,
+          name: userMetadata?.name || userMetadata?.full_name || email.split('@')[0],
+          role: 'user',
+          createdAt: new Date()
+        });
+        return;
+      }
+
+      if (!profile) {
         // User doesn't exist, create profile
         console.log('📝 Creating new user profile for:', email);
         const newProfile = {
@@ -178,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const { data: createdProfile, error: createError } = await supabase
           .from('users')
           .insert(newProfile)
-          .select()
+          .select('id, email, name, avatar, role, created_at')
           .single();
 
         if (createError) {
@@ -203,7 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: createdProfile.role,
           createdAt: new Date(createdProfile.created_at)
         });
-      } else if (!error && profile) {
+      } else {
         console.log('✅ User profile loaded successfully');
         setUser({
           id: profile.id,
@@ -213,16 +221,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: profile.role,
           createdAt: new Date(profile.created_at)
         });
-      } else if (error) {
-        console.error('❌ Error loading user profile:', error);
-        // Set basic user info even if profile loading fails
-        setUser({
-          id: userId,
-          email: email,
-          name: userMetadata?.name || email.split('@')[0],
-          role: 'user',
-          createdAt: new Date()
-        });
       }
     } catch (error) {
       console.error('❌ Error in loadUserProfile:', error);
@@ -230,7 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser({
         id: userId,
         email: email,
-        name: userMetadata?.name || email.split('@')[0],
+        name: userMetadata?.name || userMetadata?.full_name || email.split('@')[0],
         role: 'user',
         createdAt: new Date()
       });

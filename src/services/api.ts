@@ -1,13 +1,8 @@
-import { createClient } from '@supabase/supabase-js'
 import { Paper, Summary } from '../types'
 import { LLMService, LLMProvider } from './llm'
 import { PDFProcessor } from './pdfProcessor'
 import { AcademicDatabaseService } from './academicDatabase'
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-)
+import { supabase } from '../lib/supabase'
 
 export class ApiService {
   static async uploadPaper(file: File): Promise<Paper> {
@@ -118,78 +113,6 @@ export class ApiService {
       } else {
         throw new Error(`Upload failed: ${error.message || 'Unknown error'}`);
       }
-    }
-  }
-
-  private static async uploadPaperWithServerExtraction(file: File): Promise<Paper> {
-    // Fallback to server-side extraction
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const extractResponse = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/extract-pdf`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: formData,
-      }
-    )
-
-    if (!extractResponse.ok) {
-      const errorData = await extractResponse.json().catch(() => ({}))
-      throw new Error(errorData.error || 'Failed to extract PDF content')
-    }
-
-    const { text, metadata, structure } = await extractResponse.json()
-
-    // Extract title and authors from server response
-    const title = metadata.title || this.extractTitleFromFilename(file.name)
-    const authors = metadata.authors || ['Unknown Author']
-
-    // Get current user if authenticated
-    let userId = 'anonymous';
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        userId = user.id;
-      }
-    } catch (authError) {
-      console.warn('Auth check failed, using anonymous user:', authError);
-    }
-
-    // Create paper record in database
-    const { data: paper, error } = await supabase
-      .from('papers')
-      .insert({
-        title,
-        authors,
-        content: text,
-        metadata: {
-          ...metadata,
-          structure,
-          originalFilename: file.name,
-          uploadedAt: new Date().toISOString(),
-          extractionMethod: 'server-side',
-          uploadedBy: userId
-        }
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Database error:', error)
-      throw new Error('Failed to save paper to database')
-    }
-
-    return {
-      id: paper.id,
-      title: paper.title,
-      authors: paper.authors,
-      content: paper.content,
-      uploadedFile: file,
-      metadata: paper.metadata
     }
   }
 
