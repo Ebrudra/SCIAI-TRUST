@@ -7,13 +7,14 @@ import AdminDashboard from './components/AdminDashboard';
 import UserHistory from './components/UserHistory';
 import WorkspaceManagement from './components/WorkspaceManagement';
 import UserProfile from './components/UserProfile';
+import AdvancedAnalytics from './components/AdvancedAnalytics';
 import LLMProviderSelector from './components/LLMProviderSelector';
 import { Paper, Summary } from './types';
 import { ApiService } from './services/api';
 import { LLMProvider } from './services/llm';
 import { useAuth } from './contexts/AuthContext';
 
-type AppView = 'homepage' | 'analysis' | 'admin' | 'history' | 'workspaces' | 'profile';
+type AppView = 'homepage' | 'analysis' | 'admin' | 'history' | 'workspaces' | 'profile' | 'analytics';
 
 function App() {
   const { user, loading } = useAuth();
@@ -102,6 +103,10 @@ function App() {
 
       {currentView === 'admin' && (
         <AdminDashboard />
+      )}
+
+      {currentView === 'analytics' && (
+        <AdvancedAnalytics />
       )}
 
       {currentView === 'history' && (
