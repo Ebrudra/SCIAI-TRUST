@@ -38,17 +38,17 @@ export interface PDFExtractionResult {
 
 export class PDFProcessor {
   static async extractTextFromFile(file: File): Promise<PDFExtractionResult> {
-    console.log('🔄 Starting PDF text extraction...');
+    console.log('🔄 Starting optimized PDF text extraction...');
     console.log(`📄 File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
     
     try {
-      // Set a timeout for the entire extraction process
-      const extractionPromise = this.performExtraction(file);
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('PDF extraction timeout after 30 seconds')), 30000);
-      });
+      // Quick validation
+      if (file.size > 100 * 1024 * 1024) { // 100MB limit
+        throw new Error('File too large. Please use a file smaller than 100MB.');
+      }
 
-      const result = await Promise.race([extractionPromise, timeoutPromise]);
+      // Perform extraction with optimizations
+      const result = await this.performOptimizedExtraction(file);
       console.log('✅ PDF extraction completed successfully');
       return result;
       
@@ -61,47 +61,33 @@ export class PDFProcessor {
     }
   }
 
-  private static async performExtraction(file: File): Promise<PDFExtractionResult> {
+  private static async performOptimizedExtraction(file: File): Promise<PDFExtractionResult> {
     try {
-      // Convert file to ArrayBuffer with progress tracking
+      // Convert file to ArrayBuffer quickly
       console.log('📖 Reading file...');
-      const arrayBuffer = await this.readFileWithTimeout(file);
+      const arrayBuffer = await file.arrayBuffer();
       console.log('✅ File read successfully');
       
-      // Load PDF document with timeout
+      // Load PDF document with optimized settings
       console.log('🔍 Loading PDF document...');
-      const loadingTask = pdfjsLib.getDocument({ 
+      const pdf = await pdfjsLib.getDocument({ 
         data: arrayBuffer,
         verbosity: 0, // Reduce logging
-        maxImageSize: 1024 * 1024, // Limit image size to prevent memory issues
-        disableFontFace: true, // Disable font loading for faster processing
+        maxImageSize: 512 * 512, // Smaller image limit for speed
+        disableFontFace: true, // Disable font loading
         disableRange: false,
-        disableStream: false
-      });
-
-      // Set timeout for PDF loading
-      const pdf = await Promise.race([
-        loadingTask.promise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            loadingTask.destroy();
-            reject(new Error('PDF loading timeout'));
-          }, 15000);
-        })
-      ]);
+        disableStream: false,
+        useSystemFonts: false, // Don't load system fonts
+        standardFontDataUrl: undefined // Don't load standard fonts
+      }).promise;
 
       console.log(`✅ PDF loaded successfully (${pdf.numPages} pages)`);
       
-      // Extract metadata with timeout
+      // Extract metadata quickly
       console.log('📋 Extracting metadata...');
       let metadata;
       try {
-        metadata = await Promise.race([
-          pdf.getMetadata(),
-          new Promise<any>((_, reject) => {
-            setTimeout(() => reject(new Error('Metadata timeout')), 5000);
-          })
-        ]);
+        metadata = await pdf.getMetadata();
       } catch (metaError) {
         console.warn('⚠️ Metadata extraction failed, using defaults');
         metadata = { info: {} };
@@ -109,62 +95,71 @@ export class PDFProcessor {
 
       const info = metadata.info || {};
       
-      // Extract text from pages with progress tracking
+      // Extract text from pages with optimizations
       console.log('📝 Extracting text from pages...');
       const pages: Array<{ pageNumber: number; text: string; wordCount: number }> = [];
       let fullText = '';
       
-      // Limit pages to prevent memory issues
-      const maxPages = Math.min(pdf.numPages, 50);
-      console.log(`📄 Processing ${maxPages} pages (limited from ${pdf.numPages})`);
+      // Process pages in batches for better performance
+      const maxPages = Math.min(pdf.numPages, 100); // Increased limit but still reasonable
+      const batchSize = 5; // Process 5 pages at a time
       
-      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      console.log(`📄 Processing ${maxPages} pages in batches of ${batchSize}`);
+      
+      for (let startPage = 1; startPage <= maxPages; startPage += batchSize) {
+        const endPage = Math.min(startPage + batchSize - 1, maxPages);
+        console.log(`📄 Processing batch: pages ${startPage}-${endPage}`);
+        
+        // Process batch of pages concurrently
+        const batchPromises = [];
+        for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+          batchPromises.push(this.extractPageTextOptimized(pdf, pageNum));
+        }
+        
         try {
-          console.log(`📄 Processing page ${pageNum}/${maxPages}...`);
+          const batchResults = await Promise.all(batchPromises);
           
-          const pagePromise = this.extractPageText(pdf, pageNum);
-          const timeoutPromise = new Promise<string>((_, reject) => {
-            setTimeout(() => reject(new Error(`Page ${pageNum} timeout`)), 10000);
-          });
-
-          const pageText = await Promise.race([pagePromise, timeoutPromise]);
-          
-          const wordCount = pageText.split(/\s+/).filter(word => word.length > 0).length;
-          
-          pages.push({
-            pageNumber: pageNum,
-            text: pageText,
-            wordCount
+          batchResults.forEach((pageText, index) => {
+            const pageNum = startPage + index;
+            const wordCount = pageText.split(/\s+/).filter(word => word.length > 0).length;
+            
+            pages.push({
+              pageNumber: pageNum,
+              text: pageText,
+              wordCount
+            });
+            
+            fullText += pageText + '\n\n';
           });
           
-          fullText += pageText + '\n\n';
-          
-          // Add small delay to prevent blocking
-          if (pageNum % 5 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 10));
+        } catch (batchError) {
+          console.warn(`⚠️ Failed to process batch ${startPage}-${endPage}:`, batchError);
+          // Add placeholder pages for failed batch
+          for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
+            pages.push({
+              pageNumber: pageNum,
+              text: `[Page ${pageNum} extraction failed]`,
+              wordCount: 0
+            });
           }
-          
-        } catch (pageError) {
-          console.warn(`⚠️ Failed to extract page ${pageNum}:`, pageError);
-          // Continue with other pages
-          pages.push({
-            pageNumber: pageNum,
-            text: `[Page ${pageNum} extraction failed]`,
-            wordCount: 0
-          });
+        }
+        
+        // Small delay between batches to prevent blocking
+        if (endPage < maxPages) {
+          await new Promise(resolve => setTimeout(resolve, 10));
         }
       }
       
-      // Clean up the full text
+      // Clean up the full text efficiently
       console.log('🧹 Cleaning extracted text...');
-      fullText = this.cleanExtractedText(fullText);
+      fullText = this.cleanExtractedTextOptimized(fullText);
       const totalWordCount = fullText.split(/\s+/).filter(word => word.length > 0).length;
       
       console.log(`📊 Extraction stats: ${totalWordCount} words from ${pages.length} pages`);
       
-      // Analyze document structure
+      // Analyze document structure quickly
       console.log('🔍 Analyzing document structure...');
-      const structure = this.analyzeDocumentStructure(fullText);
+      const structure = this.analyzeDocumentStructureOptimized(fullText);
       
       return {
         text: fullText,
@@ -187,50 +182,33 @@ export class PDFProcessor {
       };
       
     } catch (error) {
-      console.error('❌ Error in performExtraction:', error);
+      console.error('❌ Error in performOptimizedExtraction:', error);
       throw error;
     }
   }
 
-  private static async readFileWithTimeout(file: File): Promise<ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      const timeout = setTimeout(() => {
-        reader.abort();
-        reject(new Error('File reading timeout'));
-      }, 10000);
-
-      reader.onload = () => {
-        clearTimeout(timeout);
-        resolve(reader.result as ArrayBuffer);
-      };
-
-      reader.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('File reading failed'));
-      };
-
-      reader.readAsArrayBuffer(file);
-    });
-  }
-
-  private static async extractPageText(pdf: any, pageNum: number): Promise<string> {
-    const page = await pdf.getPage(pageNum);
-    const textContent = await page.getTextContent();
-    
-    // Combine text items with proper spacing
-    const pageText = textContent.items
-      .map((item: any) => {
-        if ('str' in item) {
-          return item.str;
-        }
-        return '';
-      })
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    return pageText;
+  private static async extractPageTextOptimized(pdf: any, pageNum: number): Promise<string> {
+    try {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent({
+        normalizeWhitespace: true,
+        disableCombineTextItems: false
+      });
+      
+      // Optimized text combination
+      const textItems = textContent.items;
+      const pageText = textItems
+        .filter((item: any) => item.str && item.str.trim().length > 0)
+        .map((item: any) => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      return pageText;
+    } catch (error) {
+      console.warn(`⚠️ Failed to extract page ${pageNum}:`, error);
+      return `[Page ${pageNum} extraction failed]`;
+    }
   }
 
   private static createFallbackResult(file: File, error: any): PDFExtractionResult {
@@ -285,33 +263,28 @@ File details:
     };
   }
   
-  private static cleanExtractedText(text: string): string {
+  private static cleanExtractedTextOptimized(text: string): string {
+    // Optimized text cleaning with fewer regex operations
     return text
-      // Remove excessive whitespace
-      .replace(/\s+/g, ' ')
-      // Remove page numbers and headers/footers (simple heuristic)
-      .replace(/^\d+\s*$/gm, '')
-      // Remove isolated single characters
-      .replace(/\b\w\b/g, '')
-      // Clean up line breaks
-      .replace(/\n\s*\n/g, '\n\n')
-      // Remove leading/trailing whitespace
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .replace(/^\d+\s*$/gm, '') // Remove page numbers
+      .replace(/\n\s*\n/g, '\n\n') // Clean line breaks
       .trim();
   }
   
-  private static analyzeDocumentStructure(text: string): PDFExtractionResult['structure'] {
+  private static analyzeDocumentStructureOptimized(text: string): PDFExtractionResult['structure'] {
     const lowerText = text.toLowerCase();
     
-    // Common section headers and patterns
-    const abstractPattern = /\b(abstract|summary)\b/i;
-    const introPattern = /\b(introduction|background)\b/i;
-    const methodPattern = /\b(method|methodology|approach|procedure)\b/i;
-    const resultsPattern = /\b(results|findings|outcomes)\b/i;
-    const conclusionPattern = /\b(conclusion|discussion|summary)\b/i;
-    const referencesPattern = /\b(references|bibliography|works cited)\b/i;
+    // Use simple includes for faster matching
+    const hasAbstract = lowerText.includes('abstract') || lowerText.includes('summary');
+    const hasIntroduction = lowerText.includes('introduction') || lowerText.includes('background');
+    const hasMethodology = lowerText.includes('method') || lowerText.includes('approach') || lowerText.includes('procedure');
+    const hasResults = lowerText.includes('results') || lowerText.includes('findings') || lowerText.includes('outcomes');
+    const hasConclusion = lowerText.includes('conclusion') || lowerText.includes('discussion');
+    const hasReferences = lowerText.includes('references') || lowerText.includes('bibliography');
     
-    // Extract potential section headers (lines that are short and likely headers)
-    const lines = text.split('\n');
+    // Quick section extraction
+    const lines = text.split('\n').slice(0, 50); // Only check first 50 lines
     const potentialSections = lines
       .filter(line => {
         const trimmed = line.trim();
@@ -320,39 +293,34 @@ File details:
                /^[A-Z]/.test(trimmed) &&
                !trimmed.includes('.');
       })
-      .slice(0, 20); // Limit to first 20 potential sections
+      .slice(0, 15); // Limit to first 15 sections
     
     return {
-      hasAbstract: abstractPattern.test(lowerText),
-      hasIntroduction: introPattern.test(lowerText),
-      hasMethodology: methodPattern.test(lowerText),
-      hasResults: resultsPattern.test(lowerText),
-      hasConclusion: conclusionPattern.test(lowerText),
-      hasReferences: referencesPattern.test(lowerText),
+      hasAbstract,
+      hasIntroduction,
+      hasMethodology,
+      hasResults,
+      hasConclusion,
+      hasReferences,
       sections: potentialSections
     };
   }
   
   static extractAuthorsFromText(text: string): string[] {
-    // Enhanced author extraction patterns
+    // Optimized author extraction with fewer regex operations
     const patterns = [
-      // Pattern: "Authors: John Doe, Jane Smith"
       /(?:authors?|by)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*)*(?:\s*,\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]*)*)*)/i,
-      // Pattern: Multiple names at the beginning
-      /^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+\s+[A-Z][a-z]+)*)/m,
-      // Pattern: Names with affiliations
-      /([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s*\d+)?(?:\s*,\s*([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s*\d+)?)*\s*(?:\n|$)/m
+      /^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+\s+[A-Z][a-z]+)*)/m
     ];
     
     for (const pattern of patterns) {
       const match = text.match(pattern);
       if (match) {
-        const authorsString = match[1];
-        const authors = authorsString
+        const authors = match[1]
           .split(/,\s*/)
           .map(author => author.trim())
           .filter(author => author.length > 3 && author.length < 50)
-          .slice(0, 10); // Limit to 10 authors max
+          .slice(0, 10);
         
         if (authors.length > 0) {
           return authors;
@@ -364,12 +332,11 @@ File details:
   }
   
   static extractTitleFromText(text: string): string | null {
-    // Look for title in first few lines
-    const lines = text.split('\n').slice(0, 10);
+    // Quick title extraction from first few lines
+    const lines = text.split('\n').slice(0, 5);
     
     for (const line of lines) {
       const trimmed = line.trim();
-      // Title is usually longer than 10 chars, shorter than 200, and doesn't end with period
       if (trimmed.length > 10 && 
           trimmed.length < 200 && 
           !trimmed.endsWith('.') &&
@@ -385,7 +352,7 @@ File details:
   static extractAbstract(text: string): string | null {
     const abstractMatch = text.match(/\babstract\b\s*:?\s*(.*?)(?=\n\s*\n|\b(?:introduction|keywords|1\.)\b)/is);
     if (abstractMatch) {
-      return abstractMatch[1].trim().substring(0, 1000); // Limit abstract length
+      return abstractMatch[1].trim().substring(0, 1000);
     }
     return null;
   }
