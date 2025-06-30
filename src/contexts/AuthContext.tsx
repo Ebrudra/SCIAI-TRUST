@@ -40,6 +40,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+
     // Check for existing session
     const checkSession = async () => {
       try {
@@ -48,11 +50,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (error) {
           console.error('❌ Session check error:', error);
-          setLoading(false);
+          if (mounted) setLoading(false);
           return;
         }
 
-        if (session?.user) {
+        if (session?.user && mounted) {
           console.log('✅ Found existing session for user:', session.user.email);
           await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
         } else {
@@ -61,7 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         console.error('❌ Error checking session:', error);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     };
 
@@ -72,24 +74,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       async (event, session) => {
         console.log('🔄 Auth state change:', event, session?.user?.email);
         
+        if (!mounted) return;
+
         if (event === 'SIGNED_IN' && session?.user) {
           console.log('✅ User signed in:', session.user.email);
+          setLoading(true);
           await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
+          setLoading(false);
         } else if (event === 'SIGNED_OUT') {
           console.log('👋 User signed out');
           setUser(null);
+          setLoading(false);
         } else if (event === 'TOKEN_REFRESHED' && session?.user) {
           console.log('🔄 Token refreshed for:', session.user.email);
           // Don't reload profile on token refresh if we already have user data
           if (!user) {
+            setLoading(true);
             await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
+            setLoading(false);
           }
         }
-        setLoading(false);
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadUserProfile = async (userId: string, email: string, userMetadata: any = {}) => {
@@ -202,9 +213,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      if (data.user) {
+      if (data.user && data.session) {
         console.log('✅ Sign in successful for:', data.user.email);
         // User profile will be loaded by the auth state change listener
+        // But we'll also load it here to ensure immediate state update
+        await loadUserProfile(data.user.id, data.user.email!, data.user.user_metadata);
       } else {
         console.error('❌ No user data returned from sign in');
         setLoading(false);
@@ -214,6 +227,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('❌ Sign in error:', error);
       setLoading(false);
       throw error;
+    } finally {
+      // Don't set loading to false here as the auth state change will handle it
     }
   };
 
@@ -262,6 +277,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // If we have a session, the user is automatically signed in
         console.log('✅ User automatically signed in after signup');
+        // Profile will be created by the auth state change listener
       } else {
         console.error('❌ No user data returned from sign up');
         setLoading(false);
@@ -276,6 +292,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     console.log('👋 Signing out user');
+    setLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {
@@ -287,6 +304,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('❌ Error during sign out:', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 

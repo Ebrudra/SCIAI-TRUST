@@ -50,7 +50,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 's
         console.log('🔐 Attempting sign in for:', email);
         await signIn(email.trim(), password);
         console.log('✅ Sign in successful, closing modal');
+        // Close modal immediately after successful sign in
         onClose();
+        // Clear form
+        setEmail('');
+        setPassword('');
+        setName('');
       } else if (mode === 'signup') {
         console.log('📝 Attempting sign up for:', email);
         await signUp(email.trim(), password, name.trim() || undefined);
@@ -88,6 +93,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 's
     resetForm();
   };
 
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -100,8 +110,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 's
             {mode === 'reset' && 'Reset Password'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
+            disabled={isLoading}
           >
             <X className="h-6 w-6" />
           </button>

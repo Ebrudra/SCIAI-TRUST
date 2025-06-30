@@ -16,7 +16,7 @@ import { useAuth } from './contexts/AuthContext';
 type AppView = 'homepage' | 'analysis' | 'admin' | 'history' | 'workspaces' | 'profile';
 
 function App() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const [currentView, setCurrentView] = useState<AppView>('homepage');
   const [currentPaper, setCurrentPaper] = useState<Paper | null>(null);
   const [currentSummary, setCurrentSummary] = useState<Summary | null>(null);
@@ -73,6 +73,18 @@ function App() {
     setCurrentView('homepage');
     handleNewAnalysis();
   };
+
+  // Show loading spinner while auth is initializing
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
