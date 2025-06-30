@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, FileText, Link, AlertCircle, CheckCircle, FileCheck, Search, BookOpen, ExternalLink } from 'lucide-react';
+import { Upload, FileText, Link, AlertCircle, CheckCircle, FileCheck, Search, BookOpen, ExternalLink, X } from 'lucide-react';
 import { Paper } from '../types';
 import { ApiService } from '../services/api';
 
@@ -17,6 +17,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
     stage: string;
     details?: string;
     completed: boolean;
+    error?: boolean;
   } | null>(null);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -44,14 +45,30 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
     }
   }, []);
 
+  const resetProgress = () => {
+    setExtractionProgress(null);
+    setIsProcessing(false);
+    setProcessingStage('');
+  };
+
   const handleFileUpload = async (file: File) => {
+    console.log('🔄 Starting file upload process...');
     setIsProcessing(true);
     setProcessingStage('Preparing file...');
     
     try {
-      // Show extraction progress
+      // Validate file
+      if (!file.type.includes('pdf')) {
+        throw new Error('Please select a PDF file');
+      }
+
+      if (file.size > 50 * 1024 * 1024) { // 50MB limit
+        throw new Error('File size too large. Please use a file smaller than 50MB');
+      }
+
+      // Show initial progress
       setExtractionProgress({
-        stage: 'Reading PDF file',
+        stage: 'Validating PDF file',
         details: `Processing ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`,
         completed: false
       });
@@ -61,31 +78,64 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
 
       setExtractionProgress({
         stage: 'Extracting text content',
-        details: 'Using PDF.js to extract readable text...',
+        details: 'Using PDF.js to extract readable text and metadata...',
         completed: false
       });
 
-      // Process the PDF
-      const paper = await ApiService.uploadPaper(file);
+      // Process the PDF with timeout handling
+      let paper;
+      try {
+        paper = await Promise.race([
+          ApiService.uploadPaper(file),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('PDF processing timeout. Please try a smaller or simpler PDF file.')), 45000);
+          })
+        ]);
+      } catch (processingError) {
+        console.error('PDF processing error:', processingError);
+        
+        // Show error state
+        setExtractionProgress({
+          stage: 'Processing failed',
+          details: processingError.message || 'Failed to extract text from PDF',
+          completed: false,
+          error: true
+        });
+
+        // Wait a moment to show error, then reset
+        setTimeout(() => {
+          resetProgress();
+        }, 3000);
+        return;
+      }
 
       setExtractionProgress({
         stage: 'Analysis complete',
-        details: `Extracted ${paper.metadata?.wordCount || 'unknown'} words from ${paper.metadata?.pageCount || 'unknown'} pages`,
+        details: `Successfully extracted ${paper.metadata?.wordCount || 'unknown'} words from ${paper.metadata?.pageCount || 'unknown'} pages`,
         completed: true
       });
 
       // Show completion briefly before proceeding
       await new Promise(resolve => setTimeout(resolve, 1000));
 
+      console.log('✅ File upload completed successfully');
       onPaperSubmit(paper);
+      resetProgress();
+
     } catch (error) {
       console.error('Error uploading file:', error);
-      setExtractionProgress(null);
-      alert(`Error processing PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsProcessing(false);
-      setProcessingStage('');
-      setExtractionProgress(null);
+      
+      setExtractionProgress({
+        stage: 'Upload failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred',
+        completed: false,
+        error: true
+      });
+
+      // Reset after showing error
+      setTimeout(() => {
+        resetProgress();
+      }, 3000);
     }
   };
 
@@ -122,14 +172,21 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
 
       onPaperSubmit(paper);
       setIdentifier('');
+      resetProgress();
+
     } catch (error) {
       console.error('Error processing identifier:', error);
-      setExtractionProgress(null);
-      alert(`Error processing identifier: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsProcessing(false);
-      setProcessingStage('');
-      setExtractionProgress(null);
+      
+      setExtractionProgress({
+        stage: 'Processing failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred',
+        completed: false,
+        error: true
+      });
+
+      setTimeout(() => {
+        resetProgress();
+      }, 3000);
     }
   };
 
@@ -193,29 +250,58 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
               {extractionProgress ? (
                 <div className="w-full max-w-md">
                   <div className="flex items-center justify-center mb-4">
-                    {extractionProgress.completed ? (
+                    {extractionProgress.error ? (
+                      <div className="relative">
+                        <AlertCircle className="h-8 w-8 text-red-500" />
+                        <button
+                          onClick={resetProgress}
+                          className="absolute -top-1 -right-1 p-1 bg-red-100 rounded-full hover:bg-red-200"
+                          title="Close"
+                        >
+                          <X className="h-3 w-3 text-red-600" />
+                        </button>
+                      </div>
+                    ) : extractionProgress.completed ? (
                       <CheckCircle className="h-8 w-8 text-green-500" />
                     ) : (
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                     )}
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  <h3 className={`text-lg font-medium mb-2 ${
+                    extractionProgress.error ? 'text-red-900' : 'text-gray-900'
+                  }`}>
                     {extractionProgress.stage}
                   </h3>
                   {extractionProgress.details && (
-                    <p className="text-sm text-gray-600 mb-4">{extractionProgress.details}</p>
+                    <p className={`text-sm mb-4 ${
+                      extractionProgress.error ? 'text-red-600' : 'text-gray-600'
+                    }`}>
+                      {extractionProgress.details}
+                    </p>
                   )}
-                  <div className="bg-gray-200 rounded-full h-2 mb-4">
-                    <div 
-                      className={`h-2 rounded-full transition-all duration-500 ${
-                        extractionProgress.completed ? 'bg-green-500 w-full' : 'bg-blue-600 w-2/3'
-                      }`}
-                    ></div>
-                  </div>
-                  {extractionProgress.completed && (
+                  {!extractionProgress.error && (
+                    <div className="bg-gray-200 rounded-full h-2 mb-4">
+                      <div 
+                        className={`h-2 rounded-full transition-all duration-500 ${
+                          extractionProgress.completed ? 'bg-green-500 w-full' : 'bg-blue-600 w-2/3'
+                        }`}
+                      ></div>
+                    </div>
+                  )}
+                  {extractionProgress.completed && !extractionProgress.error && (
                     <div className="flex items-center justify-center text-sm text-green-600">
                       <FileCheck className="h-4 w-4 mr-2" />
                       <span>PDF processing complete</span>
+                    </div>
+                  )}
+                  {extractionProgress.error && (
+                    <div className="mt-4">
+                      <button
+                        onClick={resetProgress}
+                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+                      >
+                        Try Again
+                      </button>
                     </div>
                   )}
                 </div>
@@ -245,9 +331,10 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
                 Select PDF File
               </label>
               <div className="mt-4 text-xs text-gray-500">
-                <p>✓ Advanced PDF text extraction with PDF.js</p>
+                <p>✓ Advanced PDF text extraction with timeout protection</p>
                 <p>✓ Automatic metadata and structure detection</p>
-                <p>✓ Support for complex academic papers</p>
+                <p>✓ Support for complex academic papers (up to 50MB)</p>
+                <p>✓ Fallback handling for problematic files</p>
               </div>
             </>
           )}
@@ -259,29 +346,58 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
               {extractionProgress ? (
                 <div className="w-full max-w-md text-center">
                   <div className="flex items-center justify-center mb-4">
-                    {extractionProgress.completed ? (
+                    {extractionProgress.error ? (
+                      <div className="relative">
+                        <AlertCircle className="h-8 w-8 text-red-500" />
+                        <button
+                          onClick={resetProgress}
+                          className="absolute -top-1 -right-1 p-1 bg-red-100 rounded-full hover:bg-red-200"
+                          title="Close"
+                        >
+                          <X className="h-3 w-3 text-red-600" />
+                        </button>
+                      </div>
+                    ) : extractionProgress.completed ? (
                       <CheckCircle className="h-8 w-8 text-green-500" />
                     ) : (
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                     )}
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  <h3 className={`text-lg font-medium mb-2 ${
+                    extractionProgress.error ? 'text-red-900' : 'text-gray-900'
+                  }`}>
                     {extractionProgress.stage}
                   </h3>
                   {extractionProgress.details && (
-                    <p className="text-sm text-gray-600 mb-4">{extractionProgress.details}</p>
+                    <p className={`text-sm mb-4 ${
+                      extractionProgress.error ? 'text-red-600' : 'text-gray-600'
+                    }`}>
+                      {extractionProgress.details}
+                    </p>
                   )}
-                  <div className="bg-gray-200 rounded-full h-2 mb-4">
-                    <div 
-                      className={`h-2 rounded-full transition-all duration-500 ${
-                        extractionProgress.completed ? 'bg-green-500 w-full' : 'bg-blue-600 w-2/3'
-                      }`}
-                    ></div>
-                  </div>
-                  {extractionProgress.completed && (
+                  {!extractionProgress.error && (
+                    <div className="bg-gray-200 rounded-full h-2 mb-4">
+                      <div 
+                        className={`h-2 rounded-full transition-all duration-500 ${
+                          extractionProgress.completed ? 'bg-green-500 w-full' : 'bg-blue-600 w-2/3'
+                        }`}
+                      ></div>
+                    </div>
+                  )}
+                  {extractionProgress.completed && !extractionProgress.error && (
                     <div className="flex items-center justify-center text-sm text-green-600">
                       <BookOpen className="h-4 w-4 mr-2" />
                       <span>Paper metadata retrieved</span>
+                    </div>
+                  )}
+                  {extractionProgress.error && (
+                    <div className="mt-4">
+                      <button
+                        onClick={resetProgress}
+                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+                      >
+                        Try Again
+                      </button>
                     </div>
                   )}
                 </div>
@@ -371,7 +487,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
         <p>
           All AI-generated content includes transparency metrics and requires usage disclosure for academic integrity.
-          Academic database integration provides comprehensive metadata from trusted sources.
+          PDF processing includes timeout protection and fallback handling for problematic files.
         </p>
       </div>
     </div>

@@ -38,53 +38,132 @@ export interface PDFExtractionResult {
 
 export class PDFProcessor {
   static async extractTextFromFile(file: File): Promise<PDFExtractionResult> {
+    console.log('🔄 Starting PDF text extraction...');
+    console.log(`📄 File: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    
     try {
-      // Convert file to ArrayBuffer
-      const arrayBuffer = await file.arrayBuffer();
+      // Set a timeout for the entire extraction process
+      const extractionPromise = this.performExtraction(file);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('PDF extraction timeout after 30 seconds')), 30000);
+      });
+
+      const result = await Promise.race([extractionPromise, timeoutPromise]);
+      console.log('✅ PDF extraction completed successfully');
+      return result;
       
-      // Load PDF document
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    } catch (error) {
+      console.error('❌ PDF extraction failed:', error);
       
-      // Extract metadata
-      const metadata = await pdf.getMetadata();
-      const info = metadata.info;
+      // Provide a fallback result instead of throwing
+      console.log('🔄 Creating fallback extraction result...');
+      return this.createFallbackResult(file, error);
+    }
+  }
+
+  private static async performExtraction(file: File): Promise<PDFExtractionResult> {
+    try {
+      // Convert file to ArrayBuffer with progress tracking
+      console.log('📖 Reading file...');
+      const arrayBuffer = await this.readFileWithTimeout(file);
+      console.log('✅ File read successfully');
       
-      // Extract text from all pages
+      // Load PDF document with timeout
+      console.log('🔍 Loading PDF document...');
+      const loadingTask = pdfjsLib.getDocument({ 
+        data: arrayBuffer,
+        verbosity: 0, // Reduce logging
+        maxImageSize: 1024 * 1024, // Limit image size to prevent memory issues
+        disableFontFace: true, // Disable font loading for faster processing
+        disableRange: false,
+        disableStream: false
+      });
+
+      // Set timeout for PDF loading
+      const pdf = await Promise.race([
+        loadingTask.promise,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            loadingTask.destroy();
+            reject(new Error('PDF loading timeout'));
+          }, 15000);
+        })
+      ]);
+
+      console.log(`✅ PDF loaded successfully (${pdf.numPages} pages)`);
+      
+      // Extract metadata with timeout
+      console.log('📋 Extracting metadata...');
+      let metadata;
+      try {
+        metadata = await Promise.race([
+          pdf.getMetadata(),
+          new Promise<any>((_, reject) => {
+            setTimeout(() => reject(new Error('Metadata timeout')), 5000);
+          })
+        ]);
+      } catch (metaError) {
+        console.warn('⚠️ Metadata extraction failed, using defaults');
+        metadata = { info: {} };
+      }
+
+      const info = metadata.info || {};
+      
+      // Extract text from pages with progress tracking
+      console.log('📝 Extracting text from pages...');
       const pages: Array<{ pageNumber: number; text: string; wordCount: number }> = [];
       let fullText = '';
       
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        
-        // Combine text items with proper spacing
-        const pageText = textContent.items
-          .map((item: any) => {
-            if ('str' in item) {
-              return item.str;
-            }
-            return '';
-          })
-          .join(' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-        
-        const wordCount = pageText.split(/\s+/).filter(word => word.length > 0).length;
-        
-        pages.push({
-          pageNumber: pageNum,
-          text: pageText,
-          wordCount
-        });
-        
-        fullText += pageText + '\n\n';
+      // Limit pages to prevent memory issues
+      const maxPages = Math.min(pdf.numPages, 50);
+      console.log(`📄 Processing ${maxPages} pages (limited from ${pdf.numPages})`);
+      
+      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+        try {
+          console.log(`📄 Processing page ${pageNum}/${maxPages}...`);
+          
+          const pagePromise = this.extractPageText(pdf, pageNum);
+          const timeoutPromise = new Promise<string>((_, reject) => {
+            setTimeout(() => reject(new Error(`Page ${pageNum} timeout`)), 10000);
+          });
+
+          const pageText = await Promise.race([pagePromise, timeoutPromise]);
+          
+          const wordCount = pageText.split(/\s+/).filter(word => word.length > 0).length;
+          
+          pages.push({
+            pageNumber: pageNum,
+            text: pageText,
+            wordCount
+          });
+          
+          fullText += pageText + '\n\n';
+          
+          // Add small delay to prevent blocking
+          if (pageNum % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+          
+        } catch (pageError) {
+          console.warn(`⚠️ Failed to extract page ${pageNum}:`, pageError);
+          // Continue with other pages
+          pages.push({
+            pageNumber: pageNum,
+            text: `[Page ${pageNum} extraction failed]`,
+            wordCount: 0
+          });
+        }
       }
       
       // Clean up the full text
+      console.log('🧹 Cleaning extracted text...');
       fullText = this.cleanExtractedText(fullText);
       const totalWordCount = fullText.split(/\s+/).filter(word => word.length > 0).length;
       
+      console.log(`📊 Extraction stats: ${totalWordCount} words from ${pages.length} pages`);
+      
       // Analyze document structure
+      console.log('🔍 Analyzing document structure...');
       const structure = this.analyzeDocumentStructure(fullText);
       
       return {
@@ -97,7 +176,7 @@ export class PDFProcessor {
           producer: info.Producer || undefined,
           creationDate: info.CreationDate || undefined,
           modificationDate: info.ModDate || undefined,
-          pageCount: pdf.numPages,
+          pageCount: pages.length,
           wordCount: totalWordCount,
           extractedAt: new Date().toISOString(),
           fileSize: file.size,
@@ -108,9 +187,102 @@ export class PDFProcessor {
       };
       
     } catch (error) {
-      console.error('Error extracting PDF text:', error);
-      throw new Error(`Failed to extract text from PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('❌ Error in performExtraction:', error);
+      throw error;
     }
+  }
+
+  private static async readFileWithTimeout(file: File): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const timeout = setTimeout(() => {
+        reader.abort();
+        reject(new Error('File reading timeout'));
+      }, 10000);
+
+      reader.onload = () => {
+        clearTimeout(timeout);
+        resolve(reader.result as ArrayBuffer);
+      };
+
+      reader.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('File reading failed'));
+      };
+
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  private static async extractPageText(pdf: any, pageNum: number): Promise<string> {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    
+    // Combine text items with proper spacing
+    const pageText = textContent.items
+      .map((item: any) => {
+        if ('str' in item) {
+          return item.str;
+        }
+        return '';
+      })
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    return pageText;
+  }
+
+  private static createFallbackResult(file: File, error: any): PDFExtractionResult {
+    console.log('🔄 Creating fallback result due to extraction failure');
+    
+    const fallbackText = `PDF extraction failed for "${file.name}". 
+    
+Error: ${error.message || 'Unknown error'}
+    
+This appears to be a PDF document that could not be processed automatically. 
+The file may be:
+- A scanned document requiring OCR
+- Password protected
+- Corrupted or malformed
+- Too large or complex for browser-based processing
+
+Please try:
+1. Using a different PDF file
+2. Converting scanned PDFs to text-searchable format
+3. Using the DOI/URL option if available
+4. Reducing file size if the PDF is very large
+
+File details:
+- Name: ${file.name}
+- Size: ${(file.size / 1024 / 1024).toFixed(2)} MB
+- Type: ${file.type}`;
+
+    return {
+      text: fallbackText,
+      metadata: {
+        title: file.name.replace('.pdf', ''),
+        pageCount: 1,
+        wordCount: fallbackText.split(/\s+/).length,
+        extractedAt: new Date().toISOString(),
+        fileSize: file.size,
+        fileName: file.name
+      },
+      pages: [{
+        pageNumber: 1,
+        text: fallbackText,
+        wordCount: fallbackText.split(/\s+/).length
+      }],
+      structure: {
+        hasAbstract: false,
+        hasIntroduction: false,
+        hasMethodology: false,
+        hasResults: false,
+        hasConclusion: false,
+        hasReferences: false,
+        sections: ['Error Report']
+      }
+    };
   }
   
   private static cleanExtractedText(text: string): string {
