@@ -14,7 +14,8 @@ import {
   Trash2,
   Edit,
   Copy,
-  ExternalLink
+  ExternalLink,
+  TrendingUp
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
@@ -80,6 +81,8 @@ const UserHistory: React.FC = () => {
       setHistoryItems(items);
     } catch (error) {
       console.error('Error loading user history:', error);
+      // Set empty array on error to prevent crashes
+      setHistoryItems([]);
     } finally {
       setLoading(false);
     }

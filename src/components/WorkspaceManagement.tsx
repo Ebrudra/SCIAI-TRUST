@@ -18,7 +18,8 @@ import {
   Calendar,
   Activity,
   Search,
-  Filter
+  Filter,
+  MessageSquare
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { CollaborationService } from '../services/collaboration';
