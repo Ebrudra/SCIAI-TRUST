@@ -41,16 +41,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let mounted = true;
+    let timeoutId: NodeJS.Timeout;
 
-    // Check for existing session
+    // Check for existing session with timeout
     const checkSession = async () => {
       try {
         console.log('🔍 Checking existing session...');
+        
+        // Set a timeout to prevent infinite loading
+        timeoutId = setTimeout(() => {
+          if (mounted) {
+            console.warn('⏰ Session check timeout, setting loading to false');
+            setLoading(false);
+          }
+        }, 10000); // 10 second timeout
+
         const { data: { session }, error } = await supabase.auth.getSession();
+        
+        // Clear timeout if we get a response
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
         
         if (error) {
           console.error('❌ Session check error:', error);
-          if (mounted) setLoading(false);
+          if (mounted) {
+            setLoading(false);
+          }
           return;
         }
 
@@ -62,8 +79,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (error) {
         console.error('❌ Error checking session:', error);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     };
 
@@ -79,8 +101,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (event === 'SIGNED_IN' && session?.user) {
           console.log('✅ User signed in:', session.user.email);
           setLoading(true);
-          await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
-          setLoading(false);
+          try {
+            await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
+          } catch (error) {
+            console.error('❌ Error loading profile after sign in:', error);
+          } finally {
+            setLoading(false);
+          }
         } else if (event === 'SIGNED_OUT') {
           console.log('👋 User signed out');
           setUser(null);
@@ -90,8 +117,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Don't reload profile on token refresh if we already have user data
           if (!user) {
             setLoading(true);
-            await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
-            setLoading(false);
+            try {
+              await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
+            } catch (error) {
+              console.error('❌ Error loading profile after token refresh:', error);
+            } finally {
+              setLoading(false);
+            }
           }
         }
       }
@@ -99,6 +131,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       mounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       subscription.unsubscribe();
     };
   }, []);
@@ -107,12 +142,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('👤 Loading user profile for:', email);
       
+      // Set a timeout for profile loading
+      const profileTimeout = setTimeout(() => {
+        console.warn('⏰ Profile loading timeout, using fallback');
+        setUser({
+          id: userId,
+          email: email,
+          name: userMetadata?.name || email.split('@')[0],
+          role: 'user',
+          createdAt: new Date()
+        });
+        setLoading(false);
+      }, 5000); // 5 second timeout for profile loading
+      
       // Check if user profile exists in our users table
       const { data: profile, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
+
+      clearTimeout(profileTimeout);
 
       if (error && error.code === 'PGRST116') {
         // User doesn't exist, create profile
@@ -227,8 +277,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('❌ Sign in error:', error);
       setLoading(false);
       throw error;
-    } finally {
-      // Don't set loading to false here as the auth state change will handle it
     }
   };
 
