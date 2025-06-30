@@ -1,19 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Bell, 
-  X, 
-  Check, 
-  AlertTriangle, 
-  Info, 
-  MessageSquare, 
-  Share2, 
-  UserPlus,
-  FileText,
-  Settings,
-  Trash2,
-  MarkAsRead,
-  Filter
-} from 'lucide-react';
+import { Bell, X, Check, AlertTriangle, Info, MessageSquare, Share2, UserPlus, FileText, Settings, Trash2, BookMarked as MarkAsRead, Filter } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { CollaborationService } from '../services/collaboration';
 import { Notification } from '../types';
