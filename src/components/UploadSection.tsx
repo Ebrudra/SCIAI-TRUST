@@ -63,19 +63,18 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         throw new Error('Please select a PDF file');
       }
 
-      if (file.size > 50 * 1024 * 1024) { // 50MB limit
+      if (file.size > 50 * 1024 * 1024) {
         throw new Error('File size too large. Please use a file smaller than 50MB');
       }
 
-      // Show initial progress
+      // Show progress stages
       setExtractionProgress({
         stage: 'Validating PDF file',
         details: `Processing ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`,
         completed: false
       });
 
-      // Small delay to show the first stage
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       setExtractionProgress({
         stage: 'Extracting text content',
@@ -83,7 +82,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: false
       });
 
-      // Process the PDF with proper error handling
+      // Process the PDF
       let paper;
       try {
         console.log('📤 Calling ApiService.uploadPaper...');
@@ -92,7 +91,6 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
       } catch (processingError) {
         console.error('❌ PDF processing error:', processingError);
         
-        // Show error state
         setExtractionProgress({
           stage: 'Processing failed',
           details: processingError.message || 'Failed to extract text from PDF',
@@ -100,14 +98,13 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
           error: true
         });
 
-        // Wait a moment to show error, then reset
         setTimeout(() => {
           resetProgress();
         }, 3000);
         return;
       }
 
-      // Show completion state
+      // Show completion
       console.log('✅ Setting completion state...');
       setExtractionProgress({
         stage: 'Analysis complete',
@@ -115,12 +112,11 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: true
       });
 
-      // Brief delay to show completion
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       console.log('🚀 Submitting paper to parent component...');
       
-      // Reset state BEFORE calling onPaperSubmit to prevent UI issues
+      // Reset state BEFORE calling onPaperSubmit
       resetProgress();
       
       // Submit the paper
@@ -138,7 +134,6 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         error: true
       });
 
-      // Reset after showing error
       setTimeout(() => {
         resetProgress();
       }, 3000);
@@ -159,7 +154,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: false
       });
 
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       setExtractionProgress({
         stage: 'Fetching metadata',
@@ -175,7 +170,7 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
         completed: true
       });
 
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       // Reset state BEFORE calling onPaperSubmit
       resetProgress();
@@ -347,10 +342,10 @@ const UploadSection: React.FC<UploadSectionProps> = ({ onPaperSubmit }) => {
                 Select PDF File
               </label>
               <div className="mt-4 text-xs text-gray-500">
-                <p>✓ Optimized PDF text extraction with fast processing</p>
+                <p>✓ Fast PDF text extraction with optimized processing</p>
                 <p>✓ Automatic metadata and structure detection</p>
                 <p>✓ Support for complex academic papers (up to 50MB)</p>
-                <p>✓ Robust error handling and fallback mechanisms</p>
+                <p>✓ Robust error handling and recovery</p>
               </div>
             </>
           )}

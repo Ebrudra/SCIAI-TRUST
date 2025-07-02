@@ -26,11 +26,13 @@ function App() {
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider>('openai');
 
   const handleGetStarted = () => {
+    console.log('🚀 Getting started - navigating to analysis');
     setCurrentView('analysis');
   };
 
   const handleAdminAccess = () => {
     if (user?.role === 'admin') {
+      console.log('👑 Admin access granted');
       setCurrentView('admin');
     }
   };
@@ -38,6 +40,7 @@ function App() {
   const handleNavigate = (view: AppView) => {
     console.log(`🧭 Navigating to: ${view}`);
     setCurrentView(view);
+    
     // Clear analysis state when navigating away from analysis
     if (view !== 'analysis') {
       setCurrentPaper(null);
@@ -49,6 +52,7 @@ function App() {
 
   const handleLogoutSuccess = () => {
     console.log('👋 Logout successful, navigating to homepage');
+    // Immediately navigate to homepage and clear all state
     setCurrentView('homepage');
     setCurrentPaper(null);
     setCurrentSummary(null);
@@ -63,7 +67,6 @@ function App() {
     setError(null);
     
     try {
-      // Generate summary using real API with selected provider
       console.log(`🤖 Starting AI analysis with ${selectedProvider}...`);
       const summary = await ApiService.generateSummary(paper, selectedProvider);
       console.log('✅ AI analysis completed successfully');
@@ -162,7 +165,6 @@ function App() {
                 </p>
               </div>
               
-              {/* LLM Provider Selection */}
               <div className="mb-6">
                 <LLMProviderSelector 
                   selectedProvider={selectedProvider}

@@ -36,89 +36,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let mounted = true;
-    let sessionCheckTimeout: NodeJS.Timeout;
 
-    // Optimized session check with faster timeout
-    const checkSession = async () => {
+    const initializeAuth = async () => {
       try {
-        console.log('🔍 Checking existing session...');
+        console.log('🔍 Initializing authentication...');
         
-        // Set a shorter timeout to prevent long loading states
-        sessionCheckTimeout = setTimeout(() => {
-          if (mounted) {
-            console.warn('⏰ Session check timeout, setting loading to false');
-            setLoading(false);
-          }
-        }, 5000); // Reduced from 10s to 5s
-
+        // Get current session
         const { data: { session }, error } = await supabase.auth.getSession();
         
-        // Clear timeout if we get a response
-        if (sessionCheckTimeout) {
-          clearTimeout(sessionCheckTimeout);
-        }
-        
         if (error) {
-          console.error('❌ Session check error:', error);
-          if (mounted) {
-            setLoading(false);
-          }
+          console.error('❌ Session error:', error);
+          if (mounted) setLoading(false);
           return;
         }
 
         if (session?.user && mounted) {
-          console.log('✅ Found existing session for user:', session.user.email);
+          console.log('✅ Found existing session for:', session.user.email);
           await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
         } else {
           console.log('ℹ️ No existing session found');
+          if (mounted) setLoading(false);
         }
       } catch (error) {
-        console.error('❌ Error checking session:', error);
-        if (sessionCheckTimeout) {
-          clearTimeout(sessionCheckTimeout);
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        console.error('❌ Auth initialization error:', error);
+        if (mounted) setLoading(false);
       }
     };
 
-    checkSession();
+    initializeAuth();
 
-    // Listen for auth changes with optimized handling
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('🔄 Auth state change:', event, session?.user?.email);
+        console.log('🔄 Auth state change:', event);
         
         if (!mounted) return;
 
         if (event === 'SIGNED_IN' && session?.user) {
           console.log('✅ User signed in:', session.user.email);
-          setLoading(true);
-          try {
-            await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
-          } catch (error) {
-            console.error('❌ Error loading profile after sign in:', error);
-          } finally {
-            setLoading(false);
-          }
+          await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
         } else if (event === 'SIGNED_OUT') {
           console.log('👋 User signed out');
           setUser(null);
           setLoading(false);
         } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-          console.log('🔄 Token refreshed for:', session.user.email);
+          console.log('🔄 Token refreshed');
           // Don't reload profile on token refresh if we already have user data
           if (!user) {
-            setLoading(true);
-            try {
-              await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
-            } catch (error) {
-              console.error('❌ Error loading profile after token refresh:', error);
-            } finally {
-              setLoading(false);
-            }
+            await loadUserProfile(session.user.id, session.user.email!, session.user.user_metadata);
           }
         }
       }
@@ -126,9 +91,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       mounted = false;
-      if (sessionCheckTimeout) {
-        clearTimeout(sessionCheckTimeout);
-      }
       subscription.unsubscribe();
     };
   }, []);
@@ -137,9 +99,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log('👤 Loading user profile for:', email);
       
-      // Set a timeout for profile loading with faster fallback
-      const profileTimeout = setTimeout(() => {
-        console.warn('⏰ Profile loading timeout, using fallback');
+      // Check if user profile exists
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('id, email, name, avatar, role, created_at')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('❌ Error loading user profile:', error);
+        // Use fallback profile
         setUser({
           id: userId,
           email: email,
@@ -148,33 +117,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: new Date()
         });
         setLoading(false);
-      }, 3000); // Reduced from 5s to 3s
-      
-      // Check if user profile exists in our users table with faster query
-      const { data: profile, error } = await supabase
-        .from('users')
-        .select('id, email, name, avatar, role, created_at')
-        .eq('id', userId)
-        .maybeSingle(); // Use maybeSingle instead of single to avoid errors
-
-      clearTimeout(profileTimeout);
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ Error loading user profile:', error);
-        // Still set user with basic info even if profile loading fails
-        setUser({
-          id: userId,
-          email: email,
-          name: userMetadata?.name || userMetadata?.full_name || email.split('@')[0],
-          role: 'user',
-          createdAt: new Date()
-        });
         return;
       }
 
       if (!profile) {
-        // User doesn't exist, create profile
-        console.log('📝 Creating new user profile for:', email);
+        // Create new user profile
+        console.log('📝 Creating new user profile');
         const newProfile = {
           id: userId,
           email: email,
@@ -191,7 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (createError) {
           console.error('❌ Error creating user profile:', createError);
-          // Still set user with basic info even if profile creation fails
+          // Use fallback
           setUser({
             id: userId,
             email: email,
@@ -199,20 +147,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             role: 'user',
             createdAt: new Date()
           });
-          return;
+        } else {
+          setUser({
+            id: createdProfile.id,
+            email: createdProfile.email,
+            name: createdProfile.name,
+            avatar: createdProfile.avatar,
+            role: createdProfile.role,
+            createdAt: new Date(createdProfile.created_at)
+          });
         }
-
-        console.log('✅ User profile created successfully');
-        setUser({
-          id: createdProfile.id,
-          email: createdProfile.email,
-          name: createdProfile.name,
-          avatar: createdProfile.avatar,
-          role: createdProfile.role,
-          createdAt: new Date(createdProfile.created_at)
-        });
       } else {
-        console.log('✅ User profile loaded successfully');
         setUser({
           id: profile.id,
           email: profile.email,
@@ -222,9 +167,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: new Date(profile.created_at)
         });
       }
+
+      setLoading(false);
+      console.log('✅ User profile loaded successfully');
     } catch (error) {
       console.error('❌ Error in loadUserProfile:', error);
-      // Fallback: set basic user info
+      // Fallback user
       setUser({
         id: userId,
         email: email,
@@ -232,11 +180,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: 'user',
         createdAt: new Date()
       });
+      setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    console.log('🔐 Attempting to sign in user:', email);
+    console.log('🔐 Attempting to sign in:', email);
     setLoading(true);
     
     try {
@@ -249,37 +198,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('❌ Sign in error:', error);
         setLoading(false);
         
-        // Provide more specific error messages
         if (error.message.includes('Invalid login credentials')) {
           throw new Error('Invalid email or password. Please check your credentials and try again.');
         } else if (error.message.includes('Email not confirmed')) {
           throw new Error('Please check your email and click the confirmation link before signing in.');
-        } else if (error.message.includes('Too many requests')) {
-          throw new Error('Too many login attempts. Please wait a few minutes and try again.');
         } else {
           throw new Error(error.message || 'Failed to sign in. Please try again.');
         }
       }
 
       if (data.user && data.session) {
-        console.log('✅ Sign in successful for:', data.user.email);
-        // User profile will be loaded by the auth state change listener
-        // But we'll also load it here to ensure immediate state update
-        await loadUserProfile(data.user.id, data.user.email!, data.user.user_metadata);
+        console.log('✅ Sign in successful');
+        // Profile will be loaded by auth state change listener
       } else {
-        console.error('❌ No user data returned from sign in');
         setLoading(false);
         throw new Error('Sign in failed. Please try again.');
       }
     } catch (error) {
-      console.error('❌ Sign in error:', error);
       setLoading(false);
       throw error;
     }
   };
 
   const signUp = async (email: string, password: string, name?: string) => {
-    console.log('📝 Attempting to sign up user:', email);
+    console.log('📝 Attempting to sign up:', email);
     setLoading(true);
     
     try {
@@ -298,39 +240,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('❌ Sign up error:', error);
         setLoading(false);
         
-        // Provide more specific error messages
         if (error.message.includes('User already registered')) {
           throw new Error('An account with this email already exists. Please sign in instead.');
         } else if (error.message.includes('Password should be at least')) {
           throw new Error('Password must be at least 6 characters long.');
-        } else if (error.message.includes('Invalid email')) {
-          throw new Error('Please enter a valid email address.');
         } else {
           throw new Error(error.message || 'Failed to create account. Please try again.');
         }
       }
 
       if (data.user) {
-        console.log('✅ Sign up successful for:', data.user.email);
-        
-        // Check if email confirmation is required
+        console.log('✅ Sign up successful');
         if (!data.session) {
-          console.log('📧 Email confirmation required');
           setLoading(false);
-          // Don't throw an error, just inform the user
+          // Email confirmation required
           return;
         }
-        
-        // If we have a session, the user is automatically signed in
-        console.log('✅ User automatically signed in after signup');
-        // Profile will be created by the auth state change listener
       } else {
-        console.error('❌ No user data returned from sign up');
         setLoading(false);
         throw new Error('Account creation failed. Please try again.');
       }
     } catch (error) {
-      console.error('❌ Sign up error:', error);
       setLoading(false);
       throw error;
     }
@@ -338,20 +268,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     console.log('👋 Signing out user');
-    setLoading(true);
     try {
+      // Immediately clear user state
+      setUser(null);
+      setLoading(false);
+      
       const { error } = await supabase.auth.signOut();
       if (error) {
         console.error('❌ Sign out error:', error);
-        throw error;
+        // Don't throw error, user state is already cleared
       }
-      console.log('✅ Sign out successful');
-      setUser(null);
+      console.log('✅ Sign out completed');
     } catch (error) {
       console.error('❌ Error during sign out:', error);
-      throw error;
-    } finally {
-      setLoading(false);
+      // Don't throw error, user state is already cleared
     }
   };
 
