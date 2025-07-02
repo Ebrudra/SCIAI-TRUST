@@ -14,3 +14,29 @@ Authentication context: Rewriting AuthContext for faster initialization, better 
 Core components: Enhancing App.tsx and UploadSection.tsx for improved navigation, state management, and robust error recovery during PDF processing.
 API service: Optimizing database interactions with better error handling and retry logic.
 The aim of these latest changes is to resolve all reported authentication, loading, and PDF extraction issues, providing a more stable and responsive application.
+
+
+The SciAI Trust Toolkit is a comprehensive platform designed to assist researchers with AI-powered analysis of scientific papers, emphasizing ethics, transparency, and collaboration.
+
+Here's a breakdown of its current state:
+
+Core Functionality:
+
+Paper Analysis: Users can upload PDF files or provide identifiers (DOI, ArXiv, PubMed, URL) for AI-driven summarization. The system extracts key points, limitations, and citations from the papers.
+Ethical AI Analysis: The platform includes features to detect potential biases and ethical concerns within research papers, providing ethics flags with severity levels, descriptions, and recommendations.
+Explainable AI (XAI): It offers insights into the AI's decision-making process, including confidence breakdowns, decision pathways, source references, and attention weights, promoting transparency.
+Research Gap Identification: The AI can identify potential research gaps and suggest future work opportunities based on the analyzed content.
+LLM Provider Selection: Users have the flexibility to choose between OpenAI GPT-4 and Google Gemini for the AI analysis, with a fallback mechanism if API keys are not configured or if an API call fails.
+User Authentication & Management: The application integrates with Supabase for user sign-up, sign-in, and profile management. An admin dashboard is available for managing platform statistics, user feedback, and ethics alerts.
+Collaboration Features: Users can manage workspaces, invite collaborators, and engage in discussions through a commenting system on analyses.
+Sharing & Export: Summaries can be shared via generated links with configurable access (public/private, comments, download). Analyses can also be exported in various formats like PDF, DOCX, Markdown, JSON, and CSV.
+History Tracking: Users can view their past paper uploads and AI analysis history.
+Academic Integrity: Features like AI usage declarations are in place to promote responsible use of AI-generated content in research.
+Current Status and Recent Improvements:
+
+Based on our previous discussions and the current codebase, significant efforts have been made to enhance the application's stability and reliability. Specifically:
+
+Authentication Stability: The authentication context (src/contexts/AuthContext.tsx) has been refactored to ensure a single Supabase client instance (src/lib/supabase.ts), aiming to resolve issues like "Multiple GoTrueClient instances detected" and "Profile loading timeout." This also includes improvements for more robust sign-in/sign-out flows.
+PDF Processing Robustness: The UploadSection.tsx and src/services/pdfProcessor.ts include enhanced error handling and progress tracking during PDF extraction. The LLMService.ts also incorporates a comprehensive fallback analysis mechanism if the primary LLM API calls encounter issues, ensuring that users still receive some form of analysis.
+Database Schema: The Supabase database is well-structured with tables for papers, summaries, user feedback, AI usage declarations, comments, share links, notifications, workspaces, activity logs, and user profiles, supporting the application's features.
+The application is designed to be production-ready with a focus on a clean, modern UI using React, Tailwind CSS, and Lucide React.
